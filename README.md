@@ -1,10 +1,26 @@
 # Mobile Environment Local
 
-A mobile network optimization framework for antenna traffic forecasting and energy efficiency using Directed Graph Neural Networks (DirGNN) for CIO (Coordinated Inter-cell Interference Coordination) optimization.
+A mobile network optimization framework for antenna traffic forecasting and energy efficiency using Directed Graph Neural Networks (DirGNN) for CIO (Cell Individual Offset) optimization.
 
-## Overview
+## Purpose of the Project
 
-This project implements an iterative training pipeline that combines Gymnasium mobile network simulations with Graph Neural Networks to optimize handover decisions and reduce call failures. The framework uses 3GPP-compliant handover detection with CIO biasing to improve network performance.
+The primary goal of this project is to leverage Directed Graph Neural Networks (DirGNN) to find optimal values for the Cell Individual Offset (CIO) matrix in 4G and 5G cellular networks.
+
+Mobile networks are fundamentally directional and asymmetrical. User equipment moves from a serving base station to a target base station under specific spatial and signal conditions. By modeling the cellular topology as a directed graph where base stations act as nodes and handovers act as directed edges, this framework aims to intelligently predict handover failure risks. It targets specific issues like early failures, late failures, and ping-pong effects, then automatically finetunes CIO parameters to minimize these problems and optimize overall network performance.
+
+The project orchestrates a closed-loop, iterative process. It runs a Gymnasium-based mobile environment (`mobile-env`) to generate synthetic handover metrics under current CIO configurations, feeds these directed graph snapshots into a custom DirGNN to learn edge-specific failure risks, and then dynamically adjusts the CIO matrix to balance the network load and mitigate risky handovers.
+
+### Understanding Cell Individual Offset (CIO)
+
+In 4G (LTE) and 5G (NR) networks, a Cell Individual Offset is a configurable parameter used to manage and bias handover decisions between neighboring base stations.
+
+When a mobile device moves through a network, it continuously measures the signal strength of its serving cell against neighboring cells. According to 3GPP standards, a handover is triggered only when a target cell's signal strength exceeds the serving cell's strength by a specific threshold.
+
+The CIO acts as a correction factor added to or subtracted from these measurements for a specific pair of cells. A positive CIO artificially inflates the perceived signal strength of a target cell, causing the device to hand over to it earlier than it normally would. Conversely, a negative CIO de-prioritizes a target cell, delaying the handover and forcing the device to stay connected to its current serving cell longer. By fine-tuning the CIO matrix across the entire network, operators can proactively manage cell boundaries, balance traffic loads, and eliminate costly handover failures.
+
+The goal of the DirGNN modelisation is to follow this implementation:
+
+ <img width="437" height="828" alt="image" src="https://github.com/user-attachments/assets/50d5894e-01a6-4016-81cd-faad5fa98c61" />
 
 ## Project Structure & Script Details
 
