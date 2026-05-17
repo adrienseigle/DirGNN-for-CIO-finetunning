@@ -39,4 +39,4 @@ See individual module docstrings for detailed usage instructions.
 
 ## License
 
-This project is part of the CENTRALE Nantes Pole Projet S8 research initiative.
+This project is part of the CentraleSupélec Pole Projet S8 research initiative.
