@@ -88,34 +88,58 @@ pip install -r requirements.txt
 
 ### Basic Workflow
 
-Run the complete iterative CIO training pipeline:
+Run the complete iterative CIO training pipeline with a larger environment (9 base stations):
 
 ```bash
 python iterative_cio_training.py \
   --data-dir results/experiment_1 \
   --iterations 4 \
   --num-episodes 20 \
-  --env-name mobile-small-central-v0
+  --env-name mobile-medium-central-v0
 ```
+
+### Environment Options
+
+The project supports three environment sizes:
+
+| Environment | Base Stations | CIO Matrix Size | Notes |
+|---|---|---|---|
+| `mobile-small-central-v0` | 3 | 3×3 | Baseline, quick testing |
+| `mobile-medium-central-v0` | 9 | 9×9 | **Default** - balanced for research |
+| `mobile-large-central-v0` | 19 | 19×19 | Large-scale, computationally intensive |
+
+Each environment also has a multi-agent variant (`*-ma-v0`) with different network topology.
 
 ### Key Parameters
 
 - `--data-dir`: Directory to store results (CIO matrices, metrics, plots)
 - `--iterations`: Number of training iterations (simulate → train → update → repeat)
 - `--num-episodes`: Number of simulation episodes per iteration
-- `--env-name`: Gymnasium environment name to use
-- `--model`: GNN architecture (default: "DirGAT")
+- `--max-steps`: Maximum steps per episode (default: 60)
+- `--env-name`: Gymnasium environment name to use (default: `mobile-medium-central-v0`)
+- `--model`: GNN architecture (default: "dir-gat")
 - `--target`: Failure target to optimize (default: "any_failure")
+
+### Example: Large-Scale Optimization
+
+```bash
+python iterative_cio_training.py \
+  --env-name mobile-large-central-v0 \
+  --data-dir results/large_scale \
+  --iterations 5 \
+  --num-episodes 15 \
+  --hidden-dim 128
+```
 
 ### Pipeline Details
 
-1. **Initialization**: Random CIO matrix generated
+1. **Initialization**: CIO matrix automatically sized based on selected environment
 2. **Each Iteration**:
    - Simulation generates handover data with current CIO
    - GNN trains on handover failures to predict edge risks
    - CIO matrix updated based on predicted failure risks
    - Metrics and visualizations saved
-3. **Output**: Convergence analysis, failure reduction trends, optimized CIO matrix
+3. **Output**: Convergence analysis, failure reduction trends, optimized CIO matrix (heatmap)
 
 ## References
 

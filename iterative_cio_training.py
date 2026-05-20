@@ -65,7 +65,15 @@ from mobile_env_local.dirgnn_cio import DirGNNCIOModel, load_graph_snapshots, sp
 # Import for visualizations
 import seaborn as sns
 
-ENV_NAME = "mobile-small-central-v0"
+# Environment size mappings (base stations per environment)
+ENV_NUM_STATIONS = {
+    "mobile-small-central-v0": 3,
+    "mobile-small-ma-v0": 3,
+    "mobile-medium-central-v0": 9,
+    "mobile-medium-ma-v0": 9,
+    "mobile-large-central-v0": 19,
+    "mobile-large-ma-v0": 19,
+}
 
 # ============================================================
 # 3GPP Handover Parameters (based on academic paper)
@@ -458,13 +466,17 @@ def run_iterative_training(args):
         np.random.seed(args.seed)
         random.seed(args.seed)
 
+    # Determine actual number of stations from environment
+    actual_num_stations = ENV_NUM_STATIONS.get(args.env_name, args.num_stations)
+    print(f"Environment: {args.env_name} (expected {actual_num_stations} base stations)")
+    
     # Initialize or load CIO matrix
     if hasattr(args, 'cio_matrix') and args.cio_matrix is not None:
         cio_matrix = args.cio_matrix
         print(f"Using loaded CIO matrix with shape {cio_matrix.shape}")
     else:
-        cio_matrix = np.zeros((args.num_stations, args.num_stations), dtype=float)
-        print(f"Initialized new CIO matrix with shape {cio_matrix.shape}")
+        cio_matrix = np.zeros((actual_num_stations, actual_num_stations), dtype=float)
+        print(f"Initialized new CIO matrix with shape {cio_matrix.shape} ({actual_num_stations}x{actual_num_stations})")
     
     metrics = []
 
@@ -645,16 +657,18 @@ if __name__ == "__main__":
     parser.add_argument("--no-edge-attr", action="store_true", help="Do not use edge attributes in the model")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--num-stations", type=int, default=10, help="Number of stations for the CIO matrix")
+    parser.add_argument("--num-stations", type=int, default=None, help="Number of stations for the CIO matrix (auto-detected from env if not specified)")
     parser.add_argument("--load-cio", type=str, default=None, help="Path to load existing CIO matrix (NPZ or CSV)")
-    parser.add_argument("--env-name", type=str, default="mobile-small-central-v0", 
+    parser.add_argument("--env-name", type=str, default="mobile-medium-central-v0", 
                        choices=["mobile-small-central-v0", "mobile-small-ma-v0", 
                                "mobile-medium-central-v0", "mobile-medium-ma-v0",
                                "mobile-large-central-v0", "mobile-large-ma-v0"],
                        help="Environment name/scenario to use")
     args = parser.parse_args()
-    
-    # Load CIO matrix if provided
+        # Auto-detect number of stations if not explicitly specified
+    if args.num_stations is None:
+        args.num_stations = ENV_NUM_STATIONS.get(args.env_name, 9)
+        # Load CIO matrix if provided
     if args.load_cio is not None:
         args.cio_matrix = load_cio_matrix(args.load_cio, args.num_stations)
     else:
