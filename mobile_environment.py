@@ -261,29 +261,35 @@ for episode in range(NUM_EPISODES):
                         snr_old = 0
                         snr_new = 0
 
-                    # Classify handover type based on SNR ratios
-                    # (simplified heuristic matching the paper's FTE/FTL/PP concepts)
-                    max_snr = max(snr_old, snr_new, 1e-10)
+                    snr_change = snr_new - snr_old
+                    snr_drop = max(0.0, snr_old - snr_new)
+                    max_snr = max(abs(snr_old), abs(snr_new), 1e-10)
                     norm_old = snr_old / max_snr
                     norm_new = snr_new / max_snr
-
-                    ho_type = "normal"
-                    if norm_new < SNR_EARLY_THRESHOLD:
-                        ho_type = "potential_early_failure"
-                    elif norm_old < SNR_LATE_THRESHOLD:
-                        ho_type = "potential_late_failure"
-
-                    # Check for ping-pong
+                    is_too_early = norm_new < SNR_EARLY_THRESHOLD
+                    is_too_late = norm_old < SNR_LATE_THRESHOLD
+                    early_severity = max(0.0, SNR_EARLY_THRESHOLD - norm_new)
+                    late_severity = max(0.0, SNR_LATE_THRESHOLD - norm_old)
                     is_ping_pong = False
+                    ping_pong_severity = 0.0
                     recent_handovers = ue_handover_times[ue_id]
                     for prev_ho_step, prev_from, prev_to in reversed(recent_handovers):
                         if step - prev_ho_step <= PING_PONG_WINDOW:
                             if prev_from == curr_bs_id and prev_to == prev_bs_id:
                                 is_ping_pong = True
-                                ho_type = "ping_pong"
+                                ping_pong_severity = 1.0 / max(1, step - prev_ho_step)
                                 break
                         else:
                             break
+                    failure_labels = []
+                    if is_too_early:
+                        failure_labels.append("potential_early_failure")
+                    if is_too_late:
+                        failure_labels.append("potential_late_failure")
+                    if is_ping_pong:
+                        failure_labels.append("ping_pong")
+                    ho_type = "+".join(failure_labels) if failure_labels else "normal"
+                    failure_severity = early_severity + late_severity + ping_pong_severity
 
                     ue_handover_times[ue_id].append((step, prev_bs_id, curr_bs_id))
 
@@ -295,8 +301,16 @@ for episode in range(NUM_EPISODES):
                         "to_bs": curr_bs_id,
                         "snr_old_bs": snr_old,
                         "snr_new_bs": snr_new,
+                        "snr_change": snr_change,
+                        "snr_drop": snr_drop,
                         "ho_type": ho_type,
+                        "is_too_early": is_too_early,
+                        "is_too_late": is_too_late,
                         "is_ping_pong": is_ping_pong,
+                        "early_severity": early_severity,
+                        "late_severity": late_severity,
+                        "ping_pong_severity": ping_pong_severity,
+                        "failure_severity": failure_severity,
                         "ue_x": ue.x,
                         "ue_y": ue.y,
                     })
@@ -332,10 +346,15 @@ for episode in range(NUM_EPISODES):
                     and e["from_bs"] == i
                     and e["to_bs"] == j
                 ]
-                n_early = sum(1 for e in edge_events if e["ho_type"] == "potential_early_failure")
-                n_late = sum(1 for e in edge_events if e["ho_type"] == "potential_late_failure")
-                n_pingpong = sum(1 for e in edge_events if e["ho_type"] == "ping_pong")
+                n_early = sum(1 for e in edge_events if e.get("is_too_early", False))
+                n_late = sum(1 for e in edge_events if e.get("is_too_late", False))
+                n_pingpong = sum(1 for e in edge_events if e.get("is_ping_pong", False))
                 n_normal = sum(1 for e in edge_events if e["ho_type"] == "normal")
+                n_failure = n_early + n_late + n_pingpong
+                early_severity = sum(float(e.get("early_severity", 0.0)) for e in edge_events)
+                late_severity = sum(float(e.get("late_severity", 0.0)) for e in edge_events)
+                ping_pong_severity = sum(float(e.get("ping_pong_severity", 0.0)) for e in edge_events)
+                failure_severity = sum(float(e.get("failure_severity", 0.0)) for e in edge_events)
 
                 all_edge_data.append({
                     "episode": episode,
@@ -347,6 +366,11 @@ for episode in range(NUM_EPISODES):
                     "early_failures": n_early,
                     "late_failures": n_late,
                     "ping_pongs": n_pingpong,
+                    "failure_count": n_failure,
+                    "early_severity": early_severity,
+                    "late_severity": late_severity,
+                    "ping_pong_severity": ping_pong_severity,
+                    "failure_severity": failure_severity,
                     "normal_handovers": n_normal,
                 })
 

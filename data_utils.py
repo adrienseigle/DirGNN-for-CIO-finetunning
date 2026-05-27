@@ -12,8 +12,27 @@ Functions:
 
 import pandas as pd
 
-EDGE_FEATURE_COLUMNS = ["handover_count", "transition_prob", "normal_handovers", "cio"]
-FAILURE_TARGETS = ["early_failures", "late_failures", "ping_pongs", "failure_count", "any_failure"]
+EDGE_FEATURE_COLUMNS = [
+    "handover_count",
+    "transition_prob",
+    "normal_handovers",
+    "cio",
+    "early_severity",
+    "late_severity",
+    "ping_pong_severity",
+    "failure_severity",
+]
+FAILURE_TARGETS = [
+    "early_failures",
+    "late_failures",
+    "ping_pongs",
+    "failure_count",
+    "any_failure",
+    "early_severity",
+    "late_severity",
+    "ping_pong_severity",
+    "failure_severity",
+]
 
 
 def add_edge_cio(edge_df: pd.DataFrame, mode: str = "transition_prob") -> pd.DataFrame:
@@ -31,6 +50,14 @@ def add_edge_cio(edge_df: pd.DataFrame, mode: str = "transition_prob") -> pd.Dat
         edge_df["cio"] = 0.0
     else:
         raise ValueError(f"Unsupported CIO init mode: {mode}")
+    return edge_df
+
+
+def ensure_edge_feature_columns(edge_df: pd.DataFrame) -> pd.DataFrame:
+    edge_df = edge_df.copy()
+    for column in EDGE_FEATURE_COLUMNS:
+        if column not in edge_df.columns:
+            edge_df[column] = 0.0
     return edge_df
 
 

@@ -37,7 +37,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
-from mobile_env_local.data_utils import EDGE_FEATURE_COLUMNS, add_edge_cio, build_failure_target
+from mobile_env_local.data_utils import EDGE_FEATURE_COLUMNS, FAILURE_TARGETS, add_edge_cio, build_failure_target, ensure_edge_feature_columns
 
 
 def directed_norm(adj: torch.Tensor) -> torch.Tensor:
@@ -224,6 +224,9 @@ def load_graph_snapshots(node_csv, edge_csv, root_dir=None, target="ping_pong"):
     node_df = pd.read_csv(node_csv)
     edge_df = pd.read_csv(edge_csv)
     edge_df = add_edge_cio(edge_df)
+    edge_df = ensure_edge_feature_columns(edge_df)
+    node_df = node_df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    edge_df = edge_df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     node_FEATURE_COLUMNS = [
         "load",
@@ -237,19 +240,24 @@ def load_graph_snapshots(node_csv, edge_csv, root_dir=None, target="ping_pong"):
 
     edge_feature_cols = EDGE_FEATURE_COLUMNS
 
-    if target not in {"ping_pong", "transition_prob", "handover_count", "early_failures", "late_failures", "ping_pongs", "failure_count", "any_failure"}:
-        raise ValueError("target must be one of ping_pong, transition_prob, handover_count, early_failures, late_failures, ping_pongs, failure_count, any_failure")
+    valid_targets = {"ping_pong", "transition_prob", "handover_count"} | set(FAILURE_TARGETS)
+    if target not in valid_targets:
+        raise ValueError(f"target must be one of {sorted(valid_targets)}")
 
     graphs = []
     grouped = node_df.groupby(["episode", "step"])
     for (episode, step), group in grouped:
         group = group.sort_values("bs_id")
-        x = torch.tensor(group[node_feature_cols].values, dtype=torch.float)
+        x_values = np.nan_to_num(group[node_feature_cols].values, nan=0.0, posinf=100.0, neginf=-100.0)
+        x_values = np.clip(x_values, -100.0, 100.0)
+        x = torch.tensor(x_values, dtype=torch.float)
 
         edge_group = edge_df[(edge_df["episode"] == episode) & (edge_df["step"] == step)]
         edge_group = edge_group.sort_values(["src_bs", "dst_bs"])
         edge_index = torch.tensor(edge_group[["src_bs", "dst_bs"]].values.T, dtype=torch.long)
-        edge_attr = torch.tensor(edge_group[edge_feature_cols].values, dtype=torch.float)
+        edge_attr_values = np.nan_to_num(edge_group[edge_feature_cols].values, nan=0.0, posinf=100.0, neginf=-100.0)
+        edge_attr_values = np.clip(edge_attr_values, -100.0, 100.0)
+        edge_attr = torch.tensor(edge_attr_values, dtype=torch.float)
 
         if target == "ping_pong":
             y = torch.tensor((edge_group["ping_pongs"] > 0).astype(float).values, dtype=torch.float)
@@ -257,8 +265,10 @@ def load_graph_snapshots(node_csv, edge_csv, root_dir=None, target="ping_pong"):
         elif target == "any_failure":
             y = torch.tensor((edge_group[["early_failures", "late_failures", "ping_pongs"]].sum(axis=1) > 0).astype(float).values, dtype=torch.float)
             is_classification = True
-        elif target in {"transition_prob", "handover_count", "early_failures", "late_failures", "ping_pongs", "failure_count"}:
-            y = torch.tensor(build_failure_target(edge_group, target).values, dtype=torch.float)
+        elif target in {"transition_prob", "handover_count"} | set(FAILURE_TARGETS):
+            y_values = np.nan_to_num(build_failure_target(edge_group, target).values, nan=0.0, posinf=100.0, neginf=0.0)
+            y_values = np.clip(y_values, 0.0, 100.0)
+            y = torch.tensor(y_values, dtype=torch.float)
             is_classification = False
         else:
             raise ValueError(f"Unsupported target: {target}")
@@ -318,7 +328,25 @@ def evaluate(model, loader, criterion, device, classification=True, use_edge_att
         prob = torch.sigmoid(preds)
         pred_label = (prob >= 0.5).float()
         accuracy = (pred_label == labels).float().mean().item()
-        metrics.update({"accuracy": accuracy})
+        tp = ((pred_label == 1) & (labels == 1)).sum().item()
+        tn = ((pred_label == 0) & (labels == 0)).sum().item()
+        fp = ((pred_label == 1) & (labels == 0)).sum().item()
+        fn = ((pred_label == 0) & (labels == 1)).sum().item()
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-12)
+        metrics.update({
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "positive_rate": labels.mean().item(),
+            "predicted_positive_rate": pred_label.mean().item(),
+            "tp": int(tp),
+            "tn": int(tn),
+            "fp": int(fp),
+            "fn": int(fn),
+        })
     else:
         mse = F.mse_loss(preds, labels).item()
         mae = F.l1_loss(preds, labels).item()
@@ -381,8 +409,12 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     model = model.to(device)
 
-    if args.target == "ping_pong":
-        criterion = nn.BCEWithLogitsLoss()
+    if args.target in {"ping_pong", "any_failure"}:
+        train_labels = torch.cat([graph.y for graph in train_graphs])
+        positives = train_labels.sum()
+        negatives = train_labels.numel() - positives
+        pos_weight = (negatives / positives.clamp_min(1.0)).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         classification = True
     else:
         criterion = nn.MSELoss()
@@ -399,7 +431,7 @@ def main():
         if val_metrics["loss"] < best_val:
             best_val = val_metrics["loss"]
             best_model = model.state_dict()
-        print(f"Epoch {epoch:03d}: train_loss={train_loss:.4f} val_loss={val_metrics['loss']:.4f}" + (f" val_acc={val_metrics['accuracy']:.4f}" if classification else f" val_mse={val_metrics['mse']:.4f}"))
+        print(f"Epoch {epoch:03d}: train_loss={train_loss:.4f} val_loss={val_metrics['loss']:.4f}" + (f" val_acc={val_metrics['accuracy']:.4f} val_f1={val_metrics['f1']:.4f} val_pos={val_metrics['positive_rate']:.4f} pred_pos={val_metrics['predicted_positive_rate']:.4f}" if classification else f" val_mse={val_metrics['mse']:.4f}"))
 
     if best_model is not None:
         model.load_state_dict(best_model)
