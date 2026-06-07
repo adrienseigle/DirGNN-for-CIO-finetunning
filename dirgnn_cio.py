@@ -37,7 +37,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
-from mobile_env_local.data_utils import EDGE_FEATURE_COLUMNS, FAILURE_TARGETS, add_edge_cio, build_failure_target, ensure_edge_feature_columns
+from mobile_env_local_2.data_utils import EDGE_FEATURE_COLUMNS, FAILURE_TARGETS, add_edge_cio, build_failure_target, ensure_edge_feature_columns
 
 
 def directed_norm(adj: torch.Tensor) -> torch.Tensor:

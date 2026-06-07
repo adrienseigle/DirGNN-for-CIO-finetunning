@@ -1,152 +1,278 @@
-# Mobile Environment Local
+# Recursive GNN CIO Optimization
 
-A mobile network optimization framework for antenna traffic forecasting and energy efficiency using Directed Graph Neural Networks (DirGNN) for CIO (Cell Individual Offset) optimization.
+This repository implements a simulator-in-the-loop optimization pipeline for **Cell Individual Offset (CIO)** tuning in mobile networks. It uses a **Directed Graph Neural Network (DirGNN)** to learn directed handover failure risk from `mobile-env` simulations, then recursively adapts the CIO matrix and re-simulates the network.
 
-## Purpose of the Project
+The current project state is focused on the recursive GNN CIO optimizer only. The older dynamic step-level CIO prototype was removed after its useful utilities were integrated directly into the recursive pipeline.
 
-The primary goal of this project is to leverage Directed Graph Neural Networks (DirGNN) to find optimal values for the Cell Individual Offset (CIO) matrix in 4G and 5G cellular networks.
+## Objective
 
-Mobile networks are fundamentally directional and asymmetrical. User equipment moves from a serving base station to a target base station under specific spatial and signal conditions. By modeling the cellular topology as a directed graph where base stations act as nodes and handovers act as directed edges, this framework aims to intelligently predict handover failure risks. It targets specific issues like early failures, late failures, and ping-pong effects, then automatically finetunes CIO parameters to minimize these problems and optimize overall network performance.
+The goal is to improve handover behavior by learning which directed base-station transitions are risky and adapting the CIO matrix accordingly.
 
-The project orchestrates a closed-loop, iterative process. It runs a Gymnasium-based mobile environment (`mobile-env`) to generate synthetic handover metrics under current CIO configurations, feeds these directed graph snapshots into a custom DirGNN to learn edge-specific failure risks, and then dynamically adjusts the CIO matrix to balance the network load and mitigate risky handovers.
+The pipeline targets:
 
-### Understanding Cell Individual Offset (CIO)
+- **Too-early handovers**
+- **Too-late handovers**
+- **Ping-pong handovers**
+- **Directed CIO adaptation per source-target base-station pair**
+- **Stable handover preservation under safety constraints**
 
-In 4G (LTE) and 5G (NR) networks, a Cell Individual Offset is a configurable parameter used to manage and bias handover decisions between neighboring base stations.
+## Core Idea
 
-When a mobile device moves through a network, it continuously measures the signal strength of its serving cell against neighboring cells. According to 3GPP standards, a handover is triggered only when a target cell's signal strength exceeds the serving cell's strength by a specific threshold.
+Each base station is represented as a graph node. Each possible handover direction `i -> j` is represented as a directed edge with edge features, including the current CIO value.
 
-The CIO acts as a correction factor added to or subtracted from these measurements for a specific pair of cells. A positive CIO artificially inflates the perceived signal strength of a target cell, causing the device to hand over to it earlier than it normally would. Conversely, a negative CIO de-prioritizes a target cell, delaying the handover and forcing the device to stay connected to its current serving cell longer. By fine-tuning the CIO matrix across the entire network, operators can proactively manage cell boundaries, balance traffic loads, and eliminate costly handover failures.
+At each recursive iteration:
 
-The goal of the DirGNN modelisation is to follow this implementation:
+1. Run a `mobile-env` simulation with the current CIO matrix.
+2. Extract node features, directed edge features, and handover events.
+3. Train a Directed GNN to predict directed-edge failure risk.
+4. Convert predicted risk into a row-wise, mean-centered CIO update.
+5. Safety-check the candidate CIO by re-simulating it.
+6. Save metrics, matrices, plots, and repeat.
 
- <img width="437" height="828" alt="image" src="https://github.com/user-attachments/assets/50d5894e-01a6-4016-81cd-faad5fa98c61" />
+## Main Script
 
-## Project Structure & Script Details
+```bash
+python recursive_gnn_cio_optimization.py
+```
 
-### Core Simulation
-- **`mobile_environment.py`** - Simulation Engine & Data Generation
-  - Simulates user equipment (UE) movement across a mobile network using the Gymnasium environment
-  - Collects handover data and implements 3GPP-compliant handover detection (Eq. 29)
-  - Generates node features: per-BS load, velocity, SNR metrics
-  - Generates edge features: handover counts, failure types (early/late/ping-pong), CIO values
-  - Extracts transition probabilities across base stations for graph construction
-  - Key functions: `simulate_dataset()`, `build_action_for_ue()`, `get_serving_bs()`
+## Important Files
 
-### Support & Utilities
-- **`env_loader.py`** - Environment Package Resolution
-  - Resolves import conflicts between local `mobile_env_local` directory and installed `mobile-env` package
-  - Uses importlib to explicitly load the installed package from site-packages
-  - Prevents shadowing issues during runtime
+| File | Role |
+|---|---|
+| `recursive_gnn_cio_optimization.py` | Main recursive simulator-in-the-loop GNN CIO optimizer |
+| `dirgnn_cio.py` | Directed GNN model definitions and graph training helpers |
+| `iterative_cio_training.py` | Legacy/support CIO training utilities reused by the recursive optimizer |
+| `env_loader.py` | Loads the installed `mobile-env` package without local import shadowing |
+| `regenerate_cio_matrix_plots.py` | Utility to regenerate CIO/risk matrix plots |
+| `REPORT_RECURSIVE_CIO_STATE.md` | Detailed technical state report and development notes |
+| `REPORT/report.tex` | LaTeX project report |
 
-- **`data_utils.py`** - Data Processing & Feature Engineering
-  - Utilities for manipulating handover data and failure metrics
-  - Functions: `add_edge_cio()` (attach CIO values), `compute_failure_counts_by_category()` (aggregate failures), `build_failure_target()` (format training targets)
-  - Supports multiple failure targets: early_failures, late_failures, ping_pongs, failure_count, any_failure
+## Model Inputs
 
-### Machine Learning Pipeline
-- **`dirgnn_cio.py`** - Directed GNN Models for Edge Risk Prediction
-  - Implements three directed graph convolution models:
-    - **DirGCNConv**: Directed Graph Convolution with separate in/out-degree handling
-    - **DirSageConv**: Directed GraphSAGE for neighborhood aggregation
-    - **DirGATConv**: Directed Graph Attention with directed normalization
-  - Architecture: DirGNNEncoder (node feature extraction) → edge embeddings → DirGNNEdgePredictor (risk scores)
-  - Key functions: `load_graph_snapshots()`, `train_epoch()`, `evaluate()`
-  - Predicts binary failures (any_failure) or regression targets (failure_count, ping_pongs)
+### Node features
 
-- **`iterative_cio_training.py`** - Main Training Pipeline Orchestrator
-  - Implements complete iterative optimization loop:
-    1. **SIMULATE**: Run mobile-env with current CIO matrix
-    2. **TRAIN**: Train Directed GNN to predict edge failures
-    3. **UPDATE**: Adjust CIO matrix based on predicted risks
-    4. **REPEAT**: Iterate until convergence
-  - Outputs: CIO matrices per iteration (NPZ + CSV), training metrics, visualization plots
-  - Command-line interface with configurable parameters (iterations, episodes, environment)
+Each base station node contains:
 
-- **`results/`** - Output & Evaluation Results
-  - Stores CIO matrices, training metrics, and visualizations from each iteration
+```text
+load
+avg_velocity
+ues_in_range
+avg_snr
+min_snr
+```
+
+### Directed edge features
+
+Each directed edge `i -> j` contains:
+
+```text
+handover_count
+transition_prob
+normal_handovers
+cio
+early_severity
+late_severity
+ping_pong_severity
+failure_severity
+```
+
+The CIO value is therefore part of the GNN edge attributes.
+
+## Prediction Target
+
+The GNN predicts directed-edge failure risk, not CIO directly.
+
+The observed risk target is based on detected failures normalized by handover activity:
+
+```text
+risk_i,j = failure_count_i,j / max(handover_count_i,j, 1)
+```
+
+The model output is passed through a sigmoid and trained with weighted mean squared error. Active handover edges receive higher weight than inactive edges.
+
+## CIO Update Rule
+
+The current CIO update is row-wise and mean-centered. For each source base station `i`, the optimizer compares risks among all outgoing targets `j`.
+
+High-risk target directions receive higher CIO values, while lower-risk target directions receive lower CIO values. The row is then centered to avoid globally suppressing all outgoing handovers from the same source cell.
+
+Safety backtracking tests several scales of the candidate update:
+
+```text
+1.0, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005, 0.001, 0.0
+```
+
+A candidate is accepted only if it preserves enough handovers relative to the baseline.
+
+## A3 Handover Rule
+
+Handover decisions are still made by the simulator using a 3GPP-inspired A3 condition. The GNN only changes the CIO matrix.
+
+Conceptually:
+
+```text
+M_t - M_s > Off_A3 + Hys_A3 + cio_scale * CIO_i,j
+```
+
+where:
+
+```text
+M_t       target-cell SNR/RSRP proxy
+M_s       serving-cell SNR/RSRP proxy
+Off_A3    global A3 offset
+Hys_A3    hysteresis
+CIO_i,j   directed CIO from source i to target j
+```
+
+The stored CIO values are intentionally scaled to be human-readable, currently around `0.1` to `1`, while `cio_scale` controls their effective impact inside the A3 condition.
+
+## Parameter Presets
+
+The optimizer supports presets:
+
+```text
+--parameter-preset auto
+--parameter-preset small-balanced
+--parameter-preset large-balanced
+--parameter-preset none
+```
+
+Default:
+
+```text
+--parameter-preset auto
+```
+
+This selects `small-balanced` for non-large environments and `large-balanced` for environment names containing `large`.
+
+Current preset scaling:
+
+```text
+cio_scale = 0.000001
+cio_lr = 2000.0
+max_cio_step = 2.0
+cio_clip = 5.0
+min_handover_ratio = 0.9
+```
+
+Use `--parameter-preset none` to avoid preset overrides when manually tuning parameters.
+
+## Example Runs
+
+### Small environment
+
+```bash
+python recursive_gnn_cio_optimization.py \
+  --output-dir results_recursive/final_small_cio_fixed \
+  --env-name mobile-small-central-v0 \
+  --num-episodes 1 \
+  --max-steps 30 \
+  --iterations 4 \
+  --min-train-graphs 5 \
+  --epochs-per-iteration 2 \
+  --hidden-dim 16 \
+  --num-layers 2 \
+  --batch-size 8 \
+  --parameter-preset auto \
+  --fixed-scenario \
+  --device cpu
+```
+
+### Large environment
+
+```bash
+python recursive_gnn_cio_optimization.py \
+  --output-dir results_recursive/final_large_cio_fixed \
+  --env-name mobile-large-central-v0 \
+  --num-episodes 1 \
+  --max-steps 80 \
+  --iterations 5 \
+  --min-train-graphs 10 \
+  --epochs-per-iteration 3 \
+  --hidden-dim 16 \
+  --num-layers 2 \
+  --batch-size 16 \
+  --parameter-preset auto \
+  --fixed-scenario \
+  --device cpu
+```
+
+## Final Validated Results
+
+### Small environment
+
+```text
+normal: 85.7%
+too_late_handover: 14.3%
+too_early_handover: 0.0%
+ping_pong_overlay: 10.7%
+final handovers: 28 / 29 baseline
+CIO range: [-0.101, 0.101]
+```
+
+### Large environment
+
+```text
+normal: 74.5%
+too_late_handover: 25.5%
+too_early_handover: 0.0%
+ping_pong_overlay: 12.4%
+final handovers: 773 / 812 baseline
+CIO range: [-0.180, 0.367]
+```
+
+## Main Outputs
+
+Each run writes:
+
+```text
+recursive_iteration_metrics.csv
+recursive_optimization_metrics.png
+recursive_edge_features.csv
+recursive_node_features.csv
+recursive_handover_events.csv
+cio_matrix_iteration_XXX.csv
+predicted_risk_matrix_iteration_XXX.csv
+final_cio_matrix.csv
+final_cio_matrix.png
+final_predicted_risk_matrix.csv
+final_predicted_risk_matrix.png
+failure_type_distribution.png
+gnn_vs_baseline_comparison.csv
+recursive_risk_gnn_model.pt
+```
 
 ## Requirements
 
-- Python 3.8+
-- PyTorch >= 1.9
+Typical dependencies include:
+
+- Python 3.10+
+- PyTorch
 - PyTorch Geometric
 - Gymnasium
-- mobile-env (for simulation)
+- mobile-env
 - NumPy
 - Pandas
 - Matplotlib
 - Seaborn
 
-## Installation
+Install project requirements with:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Usage
+## Current Repository State
 
-### Basic Workflow
+The commit-ready state keeps the recursive optimizer and final result folders:
 
-Run the complete iterative CIO training pipeline with a larger environment (9 base stations):
-
-```bash
-python iterative_cio_training.py \
-  --data-dir results/experiment_1 \
-  --iterations 4 \
-  --num-episodes 20 \
-  --env-name mobile-medium-central-v0
+```text
+results_recursive/final_small_cio_fixed
+results_recursive/final_large_cio_fixed
 ```
 
-### Environment Options
-
-The project supports three environment sizes:
-
-| Environment | Base Stations | CIO Matrix Size | Notes |
-|---|---|---|---|
-| `mobile-small-central-v0` | 3 | 3×3 | Baseline, quick testing |
-| `mobile-medium-central-v0` | 9 | 9×9 | **Default** - balanced for research |
-| `mobile-large-central-v0` | 19 | 19×19 | Large-scale, computationally intensive |
-
-Each environment also has a multi-agent variant (`*-ma-v0`) with different network topology.
-
-### Key Parameters
-
-- `--data-dir`: Directory to store results (CIO matrices, metrics, plots)
-- `--iterations`: Number of training iterations (simulate → train → update → repeat)
-- `--num-episodes`: Number of simulation episodes per iteration
-- `--max-steps`: Maximum steps per episode (default: 60)
-- `--env-name`: Gymnasium environment name to use (default: `mobile-medium-central-v0`)
-- `--model`: GNN architecture (default: "dir-gat")
-- `--target`: Failure target to optimize (default: "any_failure")
-
-### Example: Large-Scale Optimization
-
-```bash
-python iterative_cio_training.py \
-  --env-name mobile-large-central-v0 \
-  --data-dir results/large_scale \
-  --iterations 5 \
-  --num-episodes 15 \
-  --hidden-dim 128
-```
-
-### Pipeline Details
-
-1. **Initialization**: CIO matrix automatically sized based on selected environment
-2. **Each Iteration**:
-   - Simulation generates handover data with current CIO
-   - GNN trains on handover failures to predict edge risks
-   - CIO matrix updated based on predicted failure risks
-   - Metrics and visualizations saved
-3. **Output**: Convergence analysis, failure reduction trends, optimized CIO matrix (heatmap)
-
-## References
-
-- 3GPP Handover Criterion: Equation 29 (Mt - Ms > OI_t,j + hysteresis + CIO_i,j)
-- Directed normalization for graph convolutions on directed graphs
-- Research on CIO optimization for reducing handover failures
+Obsolete dynamic CIO prototype files and results have been removed.
 
 ## License
 
-This project is part of the CentraleSupélec Pole Projet S8 research initiative.
+This project is part of the CentraleSupélec Pôle Projet S8 research initiative.

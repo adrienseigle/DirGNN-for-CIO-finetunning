@@ -39,4 +39,11 @@ env/
 # Project specific
 *.log
 *.txt
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
 results/
+results_recursive/
